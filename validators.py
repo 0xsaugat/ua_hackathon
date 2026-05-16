@@ -6,13 +6,9 @@ import os
 import smtplib
 import ssl
 import unicodedata
-import re
-import socket
 
 import idna
 import dns.resolver
-import dns.exception
-from email_validator import EmailNotValidError, validate_email
 
 
 @dataclass(frozen=True)
@@ -23,6 +19,7 @@ class EmailValidationResult:
     domain_unicode: str | None = None
     domain_ascii: str | None = None
     smtp_utf8: bool = False
+    error_type: str | None = None
     error_message: str | None = None
 
 
@@ -54,6 +51,13 @@ def _is_nepali(text: str) -> bool:
 
 def _contains_non_ascii(text: str) -> bool:
     return any(ord(c) > 127 for c in text)
+
+
+def _set_email_error(result: dict, error_type: str, message: str, nepali_message: str) -> dict:
+    result["error_type"] = error_type
+    result["error"] = message
+    result["nepali_message"] = nepali_message
+    return result
 
 
 
@@ -94,14 +98,11 @@ def validate_domain_eai(domain: str) -> dict:
         labels = domain.split(".")
         encoded_labels = []
         for label in labels:
-            if _contains_non_ascii(label):
-                encoded_labels.append(idna.encode(label, uts46=True).decode("ascii"))
-            else:
-                encoded_labels.append(label)
+            encoded_labels.append(idna.encode(label, uts46=True).decode("ascii"))
         punycode = ".".join(encoded_labels)
         result["punycode"] = punycode
         result["idna2008_valid"] = True
-    except (idna.core.InvalidCodepoint, idna.core.InvalidCodepointContext, UnicodeError) as e:
+    except (idna.IDNAError, UnicodeError) as e:
         result["error"] = f"IDNA encoding error: {e}"
         return result
 
@@ -141,6 +142,7 @@ def validate_email_eai(email: str) -> dict:
         "is_smtputf8_compatible": False,
         "normalized": None,
         "domain_info": None,
+        "error_type": None,
         "error": None,
         "checks": {
             "syntax": False,
@@ -155,23 +157,32 @@ def validate_email_eai(email: str) -> dict:
     email = email.strip()
 
     if email.count("@") != 1:
-        result["error"] = "Email must contain exactly one @ symbol."
-        result["nepali_message"] = "इमेलमा एकमात्र @ चिह्न हुनुपर्छ।"
-        return result
+        return _set_email_error(
+            result,
+            "Syntax Error",
+            "Email must contain exactly one @ symbol.",
+            "इमेलमा एकमात्र @ चिह्न हुनुपर्छ।",
+        )
 
     local, domain = email.rsplit("@", 1)
     result["local_part"] = local
     result["domain_part"] = domain
 
     if not local:
-        result["error"] = "Local part (before @) cannot be empty."
-        result["nepali_message"] = "@ अघिको भाग खाली हुन हुँदैन।"
-        return result
+        return _set_email_error(
+            result,
+            "Local Part Error",
+            "Local part (before @) cannot be empty.",
+            "@ अघिको भाग खाली हुन हुँदैन।",
+        )
 
     if not domain:
-        result["error"] = "Domain part (after @) cannot be empty."
-        result["nepali_message"] = "@ पछिको डोमेन भाग खाली हुन हुँदैन।"
-        return result
+        return _set_email_error(
+            result,
+            "Domain Error",
+            "Domain part (after @) cannot be empty.",
+            "@ पछिको डोमेन भाग खाली हुन हुँदैन।",
+        )
 
     result["is_eai"] = _contains_non_ascii(local) or _contains_non_ascii(domain)
 
@@ -179,6 +190,14 @@ def validate_email_eai(email: str) -> dict:
     domain_norm = unicodedata.normalize("NFC", domain)
     result["normalized"] = f"{local_norm}@{domain_norm}"
     result["checks"]["unicode_normalized"] = True
+
+    if not (local_norm[0].isalnum() or local_norm[0] == "_"):
+        return _set_email_error(
+            result,
+            "Local Part Error",
+            "Local part must start with a letter, digit, or underscore.",
+            "स्थानीय भाग अक्षर, अंक, वा अन्डरस्कोरबाट सुरु हुनुपर्छ।",
+        )
 
     # Check for illegal special characters in local part
     # Allowed: alphanumeric, dots (.), hyphens (-), underscores (_), and non-ASCII for EAI
@@ -188,39 +207,58 @@ def validate_email_eai(email: str) -> dict:
             continue
         illegal_chars_in_local.add(char)
     if illegal_chars_in_local:
-        result["error"] = f"Local part contains invalid characters: {', '.join(sorted(illegal_chars_in_local))}"
-        result["nepali_message"] = "स्थानीय भागमा अमान्य वर्णहरू छन्।"
-        return result
+        return _set_email_error(
+            result,
+            "Local Part Error",
+            f"Local part contains invalid characters: {', '.join(sorted(illegal_chars_in_local))}",
+            "स्थानीय भागमा अमान्य वर्णहरू छन्।",
+        )
 
     # Check for spaces (universal rule violation)
     if " " in local_norm or " " in domain_norm:
-        result["error"] = "Email address cannot contain spaces."
-        result["nepali_message"] = "इमेल ठेगानामा खाली स्थान हुन हुँदैन।"
-        return result
+        return _set_email_error(
+            result,
+            "Syntax Error",
+            "Email address cannot contain spaces.",
+            "इमेल ठेगानामा खाली स्थान हुन हुँदैन।",
+        )
 
     # Check for consecutive dots
     if ".." in local_norm or ".." in domain_norm:
-        result["error"] = "Email cannot contain consecutive dots (..)."
-        result["nepali_message"] = "इमेलमा लगातार दुई बिन्दु (..) हुन हुँदैन।"
-        return result
+        error_type = "Local Part Error" if ".." in local_norm else "Domain Error"
+        return _set_email_error(
+            result,
+            error_type,
+            "Email cannot contain consecutive dots (..).",
+            "इमेलमा लगातार दुई बिन्दु (..) हुन हुँदैन।",
+        )
 
     # Check for dots at start/end of local part
     if local_norm.startswith(".") or local_norm.endswith("."):
-        result["error"] = "Local part cannot start or end with a dot (.)."
-        result["nepali_message"] = "स्थानीय भाग बिन्दु (.)बाट सुरु वा अन्त हुन हुँदैन।"
-        return result
+        return _set_email_error(
+            result,
+            "Local Part Error",
+            "Local part cannot start or end with a dot (.).",
+            "स्थानीय भाग बिन्दु (.)बाट सुरु वा अन्त हुन हुँदैन।",
+        )
 
     # Check for dots at start/end of domain
     if domain_norm.startswith(".") or domain_norm.endswith("."):
-        result["error"] = "Domain cannot start or end with a dot (.)."
-        result["nepali_message"] = "डोमेन बिन्दु (.)बाट सुरु वा अन्त हुन हुँदैन।"
-        return result
+        return _set_email_error(
+            result,
+            "Domain Error",
+            "Domain cannot start or end with a dot (.).",
+            "डोमेन बिन्दु (.)बाट सुरु वा अन्त हुन हुँदैन।",
+        )
 
     # Domain must have at least one dot (for TLD)
     if "." not in domain_norm:
-        result["error"] = "Domain must have a valid TLD (e.g., example.com)."
-        result["nepali_message"] = "डोमेनमा मान्य TLD हुनुपर्छ (उदाहरण: example.com)।"
-        return result
+        return _set_email_error(
+            result,
+            "Domain Error",
+            "Domain must have a valid TLD (e.g., example.com).",
+            "डोमेनमा मान्य TLD हुनुपर्छ (उदाहरण: example.com)।",
+        )
 
     result["checks"]["local_part_valid"] = True
     result["checks"]["syntax"] = True
@@ -229,9 +267,12 @@ def validate_email_eai(email: str) -> dict:
     result["domain_info"] = domain_info
 
     if not domain_info["idna2008_valid"]:
-        result["error"] = f"Domain is invalid: {domain_info.get('error', 'Unknown error')}"
-        result["nepali_message"] = "डोमेन नाम अमान्य छ।"
-        return result
+        return _set_email_error(
+            result,
+            "IDNA Error",
+            f"Domain is invalid: {domain_info.get('error', 'Unknown error')}",
+            "डोमेन नाम अमान्य छ।",
+        )
 
     result["checks"]["domain_valid"] = True
 
@@ -251,11 +292,19 @@ def validate_email_address(email: str) -> EmailValidationResult:
     try:
         res = validate_email_eai(email)
     except Exception as exc:
-        return EmailValidationResult(valid=False, error_message=f"Validator error: {exc}")
+        return EmailValidationResult(
+            valid=False,
+            error_type="Validator Error",
+            error_message=f"Validator error: {exc}",
+        )
 
     if not res.get("valid"):
         err = res.get("error") or res.get("nepali_message") or "Invalid"
-        return EmailValidationResult(valid=False, error_message=err)
+        return EmailValidationResult(
+            valid=False,
+            error_type=res.get("error_type") or "Validation Error",
+            error_message=err,
+        )
 
     normalized_value = res.get("normalized")
     local_part = res.get("local_part")

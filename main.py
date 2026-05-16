@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
 
-from validators import send_validation_email, validate_email_address
+from validators import validate_email_address
 
 
 load_dotenv()
@@ -13,11 +13,10 @@ load_dotenv()
 app = FastAPI(title="UAReady Email and Domain Validation System")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
-app.state.mail_sender = send_validation_email
 
 
-def build_home_context(error: str | None = None, email: str = "") -> dict:
-    return {"error": error, "email": email, "submitted": False}
+def build_home_context(error: str | None = None, email: str = "", error_type: str | None = None) -> dict:
+    return {"error": error, "error_type": error_type, "email": email, "submitted": False}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -34,40 +33,14 @@ async def contact_us(request: Request):
 async def submit_contact(request: Request, email: str = Form("")):
     validation = validate_email_address(email)
     if validation.valid:
-        sender = getattr(request.app.state, "mail_sender", send_validation_email)
-        try:
-            delivery_message = sender(validation.normalized_email or email.strip(), validation)
-        except Exception as exc:  # pragma: no cover - displayed in UI
-            return templates.TemplateResponse(
-                request,
-                "index.html",
-                {
-                    "error": f"Email is valid, but SMTP delivery failed: {exc}",
-                    "email": email,
-                    "submitted": False,
-                },
-                status_code=502,
-            )
+        return RedirectResponse(url="/thank-you", status_code=303)
 
-        return templates.TemplateResponse(
-            request,
-            "thank_you.html",
-            {
-                "email": validation.normalized_email,
-                "domain_unicode": validation.domain_unicode,
-                "domain_ascii": validation.domain_ascii,
-                "smtp_utf8": validation.smtp_utf8,
-                "delivery_message": delivery_message,
-            },
-        )
-
-    # Show a short, clear invalid label in the UI while keeping a detailed message in logs
-    short_error = "Invalid"
     return templates.TemplateResponse(
         request,
         "index.html",
         {
-            "error": short_error,
+            "error": validation.error_message or "Please enter a valid international email address.",
+            "error_type": validation.error_type or "Validation Error",
             "email": email,
             "submitted": False,
         },
@@ -77,7 +50,7 @@ async def submit_contact(request: Request, email: str = Form("")):
 
 @app.get("/thank-you", response_class=HTMLResponse)
 async def thank_you(request: Request):
-    return RedirectResponse(url="/", status_code=303)
+    return templates.TemplateResponse(request, "thank_you.html", {})
 
 
 if __name__ == "__main__":

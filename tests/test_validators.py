@@ -16,6 +16,13 @@ def test_valid_email_accepts_mixed_script_address():
     assert result.normalized_email == "pelé@mañana.com"
 
 
+def test_valid_email_accepts_local_part_with_middle_hyphen():
+    result = validate_email_address("mkandel-yy@gmail.com")
+
+    assert result.valid is True
+    assert result.normalized_email == "mkandel-yy@gmail.com"
+
+
 def test_valid_email_accepts_chinese_idn_address():
     result = validate_email_address("用户@例子.广告")
 
@@ -41,6 +48,7 @@ def test_invalid_email_rejects_missing_at_symbol():
     result = validate_email_address("plainaddress")
 
     assert result.valid is False
+    assert result.error_type == "Syntax Error"
     assert result.error_message
 
 
@@ -48,24 +56,36 @@ def test_invalid_email_rejects_missing_domain():
     result = validate_email_address("राम@")
 
     assert result.valid is False
+    assert result.error_type == "Domain Error"
+
+
+def test_invalid_email_rejects_local_part_starting_with_hyphen():
+    result = validate_email_address("-mkandel.yy@gmail.com")
+
+    assert result.valid is False
+    assert result.error_type == "Local Part Error"
+    assert result.error_message == "Local part must start with a letter, digit, or underscore."
 
 
 def test_invalid_email_rejects_double_dot_domain():
     result = validate_email_address("name@domain..com")
 
     assert result.valid is False
+    assert result.error_type == "Domain Error"
 
 
 def test_invalid_email_rejects_space_in_domain():
     result = validate_email_address("name@exa mple.com")
 
     assert result.valid is False
+    assert result.error_type == "Syntax Error"
 
 
 def test_invalid_email_rejects_broken_unicode_domain():
     result = validate_email_address("user@-example.com")
 
     assert result.valid is False
+    assert result.error_type == "IDNA Error"
 
 
 def test_domain_validation_accepts_idn_domain():

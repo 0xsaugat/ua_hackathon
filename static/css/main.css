@@ -130,9 +130,27 @@ input[type="submit"]:hover {
 }
 
 .error-message {
-  margin: 10px 0 0;
-  color: var(--danger);
+  margin: 12px 0 0;
+  padding: 12px;
+  border: 1px solid rgba(180, 35, 24, 0.24);
+  border-radius: 8px;
+  color: var(--text);
+  background: #fff5f4;
   font-size: 0.92rem;
+}
+
+.error-message p {
+  margin: 6px 0 4px;
+  line-height: 1.45;
+}
+
+.error-message small {
+  color: var(--muted);
+}
+
+.error-type {
+  display: inline-block;
+  color: var(--danger);
   font-weight: 600;
 }
 
@@ -154,28 +172,25 @@ input[type="submit"]:hover {
   color: rgba(255, 255, 255, 0.76);
 }
 
-.page-shell {
-  width: min(1040px, calc(100% - 32px));
+.success-shell {
   min-height: 100vh;
   margin: 0 auto;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  display: flex;
   align-items: center;
-  gap: 24px;
-  padding: 48px 0;
+  justify-content: center;
+  padding: 32px;
 }
+
+.success-card {
   padding: 40px;
   text-align: center;
-  .topbar,
-  .form-card,
-  .page-shell {
-    grid-template-columns: 1fr;
-  }
+}
 
-  .contact-panel,
-  .info-panel {
-    padding: 28px;
-  }
+.success-card a {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 12px 18px;
+  border-radius: 8px;
   color: #ffffff;
   background: var(--accent);
   text-decoration: none;
