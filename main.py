@@ -61,11 +61,13 @@ async def submit_contact(request: Request, email: str = Form("")):
             },
         )
 
+    # Show a short, clear invalid label in the UI while keeping a detailed message in logs
+    short_error = "Invalid"
     return templates.TemplateResponse(
         request,
         "index.html",
         {
-            "error": validation.error_message or "Please enter a valid email address.",
+            "error": short_error,
             "email": email,
             "submitted": False,
         },

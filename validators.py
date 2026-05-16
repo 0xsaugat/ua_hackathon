@@ -6,8 +6,12 @@ import os
 import smtplib
 import ssl
 import unicodedata
+import re
+import socket
 
 import idna
+import dns.resolver
+import dns.exception
 from email_validator import EmailNotValidError, validate_email
 
 
@@ -26,6 +30,33 @@ def _normalize_text(value: str) -> str:
     return unicodedata.normalize("NFC", (value or "").strip())
 
 
+# --- Script helpers from external validator (Nepal ID)
+NEPALI_RANGE = (0x0900, 0x097F)   # Devanagari block
+
+def _script_of(char: str) -> str:
+    cp = ord(char)
+    if 0x0041 <= cp <= 0x007A:
+        return "Latin"
+    if 0x0900 <= cp <= 0x097F:
+        return "Devanagari"
+    if 0x0600 <= cp <= 0x06FF:
+        return "Arabic"
+    if 0x4E00 <= cp <= 0x9FFF:
+        return "Han"
+    if 0x0400 <= cp <= 0x04FF:
+        return "Cyrillic"
+    if 0x0370 <= cp <= 0x03FF:
+        return "Greek"
+    return "Other"
+
+def _is_nepali(text: str) -> bool:
+    return any(NEPALI_RANGE[0] <= ord(c) <= NEPALI_RANGE[1] for c in text)
+
+def _contains_non_ascii(text: str) -> bool:
+    return any(ord(c) > 127 for c in text)
+
+
+
 def validate_idn_domain(domain: str) -> tuple[bool, str | None, str | None, str | None]:
     normalized_domain = _normalize_text(domain)
     if not normalized_domain:
@@ -39,38 +70,199 @@ def validate_idn_domain(domain: str) -> tuple[bool, str | None, str | None, str 
     return True, normalized_domain, ascii_domain, None
 
 
-def validate_email_address(email: str) -> EmailValidationResult:
-    normalized_email = _normalize_text(email)
-    if not normalized_email:
-        return EmailValidationResult(
-            valid=False,
-            error_message="Email address is required. कृपया ईमेल ठेगाना प्रविष्ट गर्नुहोस्।",
-        )
+# --- IDN / domain validator from Nepal validator (keeps DNS checks)
+def validate_domain_eai(domain: str) -> dict:
+    # reuse NFC normalization and idna conversion, return dict similar to external validator
+    result = {
+        "input": domain,
+        "valid": False,
+        "punycode": None,
+        "is_idn": False,
+        "idna2008_valid": False,
+        "has_mx": False,
+        "has_a": False,
+        "mx_records": [],
+        "error": None,
+        "is_nepali_domain": False,
+    }
+
+    domain = unicodedata.normalize("NFC", domain.strip().lower())
+    result["is_nepali_domain"] = _is_nepali(domain)
+    result["is_idn"] = _contains_non_ascii(domain)
 
     try:
-        result = validate_email(
-            normalized_email,
-            allow_smtputf8=True,
-            check_deliverability=False,
-        )
-    except EmailNotValidError as exc:
-        return EmailValidationResult(
-            valid=False,
-            error_message=f"Please enter a valid international email address. ({exc})",
-        )
+        labels = domain.split(".")
+        encoded_labels = []
+        for label in labels:
+            if _contains_non_ascii(label):
+                encoded_labels.append(idna.encode(label, uts46=True).decode("ascii"))
+            else:
+                encoded_labels.append(label)
+        punycode = ".".join(encoded_labels)
+        result["punycode"] = punycode
+        result["idna2008_valid"] = True
+    except (idna.core.InvalidCodepoint, idna.core.InvalidCodepointContext, UnicodeError) as e:
+        result["error"] = f"IDNA encoding error: {e}"
+        return result
 
-    normalized_value = getattr(result, "normalized", None) or getattr(result, "email", None) or normalized_email
-    local_part = getattr(result, "local_part", None)
-    domain_unicode = getattr(result, "domain", None)
-    ascii_domain = getattr(result, "ascii_domain", None)
-    smtp_utf8 = bool(getattr(result, "smtputf8", any(ord(char) > 127 for char in normalized_value)))
+    lookup_domain = result["punycode"] or domain
 
-    if domain_unicode:
-        domain_valid, normalized_domain, normalized_ascii_domain, domain_error = validate_idn_domain(domain_unicode)
-        if not domain_valid:
-            return EmailValidationResult(valid=False, error_message=domain_error)
-        domain_unicode = normalized_domain
-        ascii_domain = normalized_ascii_domain
+    # MX lookup
+    try:
+        mx_records = dns.resolver.resolve(lookup_domain, "MX", lifetime=5)
+        result["mx_records"] = [str(r.exchange).rstrip(".") for r in mx_records]
+        result["has_mx"] = True
+    except Exception:
+        pass
+
+    # A / AAAA lookup
+    try:
+        dns.resolver.resolve(lookup_domain, "A", lifetime=5)
+        result["has_a"] = True
+    except Exception:
+        try:
+            dns.resolver.resolve(lookup_domain, "AAAA", lifetime=5)
+            result["has_a"] = True
+        except Exception:
+            pass
+
+    result["valid"] = result["idna2008_valid"]
+    return result
+
+
+# --- EAI / email validator from Nepal validator (returns dict)
+def validate_email_eai(email: str) -> dict:
+    result = {
+        "input": email,
+        "valid": False,
+        "local_part": None,
+        "domain_part": None,
+        "is_eai": False,
+        "is_smtputf8_compatible": False,
+        "normalized": None,
+        "domain_info": None,
+        "error": None,
+        "checks": {
+            "syntax": False,
+            "unicode_normalized": False,
+            "local_part_valid": False,
+            "domain_valid": False,
+            "smtputf8": False,
+        },
+        "nepali_message": None,
+    }
+
+    email = email.strip()
+
+    if email.count("@") != 1:
+        result["error"] = "Email must contain exactly one @ symbol."
+        result["nepali_message"] = "इमेलमा एकमात्र @ चिह्न हुनुपर्छ।"
+        return result
+
+    local, domain = email.rsplit("@", 1)
+    result["local_part"] = local
+    result["domain_part"] = domain
+
+    if not local:
+        result["error"] = "Local part (before @) cannot be empty."
+        result["nepali_message"] = "@ अघिको भाग खाली हुन हुँदैन।"
+        return result
+
+    if not domain:
+        result["error"] = "Domain part (after @) cannot be empty."
+        result["nepali_message"] = "@ पछिको डोमेन भाग खाली हुन हुँदैन।"
+        return result
+
+    result["is_eai"] = _contains_non_ascii(local) or _contains_non_ascii(domain)
+
+    local_norm = unicodedata.normalize("NFC", local)
+    domain_norm = unicodedata.normalize("NFC", domain)
+    result["normalized"] = f"{local_norm}@{domain_norm}"
+    result["checks"]["unicode_normalized"] = True
+
+    # Check for illegal special characters in local part
+    # Allowed: alphanumeric, dots (.), hyphens (-), underscores (_), and non-ASCII for EAI
+    illegal_chars_in_local = set()
+    for char in local_norm:
+        if char.isalnum() or char in ".!#$%&'*+-/=?^_`{|}~" or ord(char) > 127:
+            continue
+        illegal_chars_in_local.add(char)
+    if illegal_chars_in_local:
+        result["error"] = f"Local part contains invalid characters: {', '.join(sorted(illegal_chars_in_local))}"
+        result["nepali_message"] = "स्थानीय भागमा अमान्य वर्णहरू छन्।"
+        return result
+
+    # Check for spaces (universal rule violation)
+    if " " in local_norm or " " in domain_norm:
+        result["error"] = "Email address cannot contain spaces."
+        result["nepali_message"] = "इमेल ठेगानामा खाली स्थान हुन हुँदैन।"
+        return result
+
+    # Check for consecutive dots
+    if ".." in local_norm or ".." in domain_norm:
+        result["error"] = "Email cannot contain consecutive dots (..)."
+        result["nepali_message"] = "इमेलमा लगातार दुई बिन्दु (..) हुन हुँदैन।"
+        return result
+
+    # Check for dots at start/end of local part
+    if local_norm.startswith(".") or local_norm.endswith("."):
+        result["error"] = "Local part cannot start or end with a dot (.)."
+        result["nepali_message"] = "स्थानीय भाग बिन्दु (.)बाट सुरु वा अन्त हुन हुँदैन।"
+        return result
+
+    # Check for dots at start/end of domain
+    if domain_norm.startswith(".") or domain_norm.endswith("."):
+        result["error"] = "Domain cannot start or end with a dot (.)."
+        result["nepali_message"] = "डोमेन बिन्दु (.)बाट सुरु वा अन्त हुन हुँदैन।"
+        return result
+
+    # Domain must have at least one dot (for TLD)
+    if "." not in domain_norm:
+        result["error"] = "Domain must have a valid TLD (e.g., example.com)."
+        result["nepali_message"] = "डोमेनमा मान्य TLD हुनुपर्छ (उदाहरण: example.com)।"
+        return result
+
+    result["checks"]["local_part_valid"] = True
+    result["checks"]["syntax"] = True
+
+    domain_info = validate_domain_eai(domain_norm)
+    result["domain_info"] = domain_info
+
+    if not domain_info["idna2008_valid"]:
+        result["error"] = f"Domain is invalid: {domain_info.get('error', 'Unknown error')}"
+        result["nepali_message"] = "डोमेन नाम अमान्य छ।"
+        return result
+
+    result["checks"]["domain_valid"] = True
+
+    if result["is_eai"]:
+        result["is_smtputf8_compatible"] = True
+        result["checks"]["smtputf8"] = True
+    else:
+        result["checks"]["smtputf8"] = True
+
+    result["valid"] = True
+    result["nepali_message"] = "इमेल ठेगाना मान्य छ।"
+    return result
+
+
+def validate_email_address(email: str) -> EmailValidationResult:
+    # Use the Nepal EAI validator for comprehensive checks and DNS lookups
+    try:
+        res = validate_email_eai(email)
+    except Exception as exc:
+        return EmailValidationResult(valid=False, error_message=f"Validator error: {exc}")
+
+    if not res.get("valid"):
+        err = res.get("error") or res.get("nepali_message") or "Invalid"
+        return EmailValidationResult(valid=False, error_message=err)
+
+    normalized_value = res.get("normalized")
+    local_part = res.get("local_part")
+    domain_unicode = res.get("domain_part")
+    domain_info = res.get("domain_info") or {}
+    ascii_domain = domain_info.get("punycode")
+    smtp_utf8 = bool(res.get("is_smtputf8_compatible", False))
 
     return EmailValidationResult(
         valid=True,
