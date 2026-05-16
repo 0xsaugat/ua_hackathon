@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Contact Us - CAN InfoTech{% endblock %}
+
+{% block content %}
+<section class="page-shell">
+  <div class="contact-panel">
+    <div class="event-mark">CAN InfoTech</div>
+    <h1>Contact Us</h1>
+    <p class="intro">
+      Share your email address and our event team will get back to you with CAN InfoTech updates.
+    </p>
+
+    <form method="post" action="/contact-us" novalidate>
+      <label for="email">Email address</label>
+      <input type="text" id="email" name="email" value="{{ email }}" placeholder="name@example.com" />
+
+      {% if error %}
+      <p class="error-message">{{ error }}</p>
+      {% endif %}
+
+      <input type="submit" value="Contact us" id="submit" />
+    </form>
+  </div>
+
+  <aside class="info-panel">
+    <p class="kicker">Automation ready</p>
+    <h2>Built for simple testing</h2>
+    <p>
+      This page keeps the form focused on the only required validation path: checking whether the
+      submitted email address is valid before redirecting to a confirmation page.
+    </p>
+  </aside>
+</section>
+{% endblock %}
