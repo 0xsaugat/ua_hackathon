@@ -1,0 +1,9 @@
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=Keep_your_email_here
+SMTP_PASSWORD=Keep_your_password_here
+SMTP_FROM_EMAIL=Keep_your_email_username_here
+SMTP_FROM_NAME=the-debuggers
+SMTP_USE_TLS=true
+SMTP_USE_SSL=false
+SMTP_TIMEOUT=20
