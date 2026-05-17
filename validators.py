@@ -6,6 +6,7 @@ import os
 import smtplib
 import ssl
 import unicodedata
+import logging
 
 import idna
 import dns.resolver
@@ -358,26 +359,75 @@ def send_validation_email(recipient_email: str, validation: EmailValidationResul
     message["To"] = recipient_email
     message.set_content(build_validation_message(validation), subtype="plain", charset="utf-8")
 
+    # Decide whether the envelope needs SMTPUTF8 support
     use_smtputf8 = validation.smtp_utf8 or any(ord(char) > 127 for char in recipient_email) or any(
         ord(char) > 127 for char in smtp_from_email
     )
-    mail_options = ["SMTPUTF8", "BODY=8BITMIME"] if use_smtputf8 else []
+
+    mail_options = ["BODY=8BITMIME"]
 
     context = ssl.create_default_context()
 
+    # Configure logging for SMTP interactions
+    logger = logging.getLogger("ua_smtp")
+    logger.debug("Connecting to SMTP %s:%s (use_ssl=%s, use_tls=%s)", smtp_host, smtp_port, smtp_use_ssl, smtp_use_tls)
+
+    def _send_with_client(client: smtplib.SMTP):
+        # Ensure EHLO/ESMTP features are current
+        try:
+            client.ehlo()
+        except Exception:
+            pass
+
+        # If we need SMTPUTF8 for non-ASCII envelope, verify server supports it
+        if use_smtputf8:
+            supports = client.has_extn("SMTPUTF8")
+            logger.debug("Server SMTPUTF8 support: %s", supports)
+            if supports:
+                mail_options.insert(0, "SMTPUTF8")
+            else:
+                # Fail early and surface a clear error — otherwise remote may reject the envelope
+                raise RuntimeError("Remote SMTP server does not advertise SMTPUTF8; cannot send internationalized mailbox addresses.")
+
+        if smtp_username and smtp_password:
+            client.login(smtp_username, smtp_password)
+
+        # send_message accepts mail_options; ensure we pass them
+        client.send_message(message, mail_options=mail_options)
+
+    # Connect and send using chosen transport
     if smtp_use_ssl:
         with smtplib.SMTP_SSL(smtp_host, smtp_port, context=context, timeout=smtp_timeout) as client:
-            if smtp_username and smtp_password:
-                client.login(smtp_username, smtp_password)
-            client.send_message(message, mail_options=mail_options)
+            try:
+                _send_with_client(client)
+            except smtplib.SMTPException as exc:
+                logger.exception("SMTP SSL send failed")
+                raise
     else:
         with smtplib.SMTP(smtp_host, smtp_port, timeout=smtp_timeout) as client:
-            client.ehlo()
-            if smtp_use_tls:
-                client.starttls(context=context)
+            client.set_debuglevel(0)
+            try:
                 client.ehlo()
-            if smtp_username and smtp_password:
-                client.login(smtp_username, smtp_password)
-            client.send_message(message, mail_options=mail_options)
+                if smtp_use_tls:
+                    client.starttls(context=context)
+                    client.ehlo()
+                try:
+                    _send_with_client(client)
+                except RuntimeError as rte:
+                    # Fallback: if SMTPUTF8 is required but unsupported, and local-part is pure ASCII,
+                    # retry using the ASCII/punycode domain (if available).
+                    logger.warning("SMTPUTF8 missing: %s. Attempting ASCII-domain fallback if possible.", rte)
+                    local = validation.local_part or ""
+                    # If local is pure ASCII, we can try local@punycode-domain
+                    if all(ord(ch) < 128 for ch in local) and validation.domain_ascii:
+                        ascii_recipient = f"{local}@{validation.domain_ascii}"
+                        logger.debug("Retrying send to ASCII recipient: %s", ascii_recipient)
+                        message["To"] = ascii_recipient
+                        client.send_message(message, mail_options=["BODY=8BITMIME"])
+                    else:
+                        raise
+            except smtplib.SMTPException as exc:
+                logger.exception("SMTP send failed")
+                raise
 
     return f"Email sent to {recipient_email} using {smtp_host}:{smtp_port}."

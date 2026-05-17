@@ -25,11 +25,35 @@ def test_submission_shows_validation_error_for_invalid_email():
     assert "Email must contain exactly one @ symbol." in response.text
 
 
-def test_submission_redirects_to_different_url_when_validation_passes():
+def test_submission_sends_email_and_redirects_to_different_url_when_validation_passes(monkeypatch):
+    captured = {}
+
+    def fake_sender(recipient_email, validation):
+        captured["recipient_email"] = recipient_email
+        captured["validation"] = validation
+        return f"Email sent to {recipient_email} using test-host:587."
+
+    monkeypatch.setattr(main.app.state, "mail_sender", fake_sender, raising=False)
+
     response = client.post("/contact-us", data={"email": "राम@नेपाल.नेपाल"}, follow_redirects=False)
 
     assert response.status_code == 303
     assert response.headers["location"] == "/thank-you"
+    assert captured["recipient_email"] == "राम@नेपाल.नेपाल"
+    assert captured["validation"].valid is True
+
+
+def test_submission_shows_smtp_error_when_delivery_fails(monkeypatch):
+    def failing_sender(recipient_email, validation):
+        raise RuntimeError("SMTP_HOST is not configured.")
+
+    monkeypatch.setattr(main.app.state, "mail_sender", failing_sender, raising=False)
+
+    response = client.post("/contact-us", data={"email": "mkandel.yy@gmail.com"})
+
+    assert response.status_code == 502
+    assert "SMTP Error" in response.text
+    assert "Email is valid, but SMTP delivery failed" in response.text
 
 
 def test_thank_you_page_renders_after_redirect():

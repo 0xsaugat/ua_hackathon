@@ -16,7 +16,7 @@ print("SMTP host:", host, "port:", port, "user:", user, "use_tls:", use_tls)
 ctx = ssl.create_default_context()
 try:
     s = smtplib.SMTP(host, port, timeout=timeout)
-    s.set_debuglevel(1)          # prints SMTP conversation to console
+    s.set_debuglevel(0)
     s.ehlo()
     if use_tls:
         s.starttls(context=ctx)

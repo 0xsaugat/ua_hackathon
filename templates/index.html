@@ -1,19 +1,18 @@
 {% extends "base.html" %}
-{% block title %}Contact Us - CAN InfoTech{% endblock %}
+{% block title %}सम्पर्क गर्नुहोस् - CAN InfoTech{% endblock %}
 
 {% block content %}
 <section class="page-shell">
   <div class="contact-panel">
     <div class="event-mark">CAN InfoTech</div>
-    <h1>UAReady Email and Domain Validation System</h1>
+    <h1>UAReady इमेल र डोमेन प्रमाणीकरण प्रणाली</h1>
     <p class="intro">
-      Hackathon Nepal 2026 demo for validating international email addresses such as
-      राम@नेपाल.नेपाल before submission.
+      ह्याकाथन नेपाल २०२६ प्रदर्शन: अन्तर्राष्ट्रिय इमेल ठेगानाहरू (उदाहरण: राम@नेपाल.नेपाल) प्रमाणित गरिन्छ।
     </p>
 
-    <form method="post" action="/contact-us" novalidate>
-      <label for="email">Email address</label>
-      <input type="text" id="email" name="email" value="{{ email }}" placeholder="name@example.com" />
+    <form method="post" action="/" novalidate>
+      <label for="email">इमेल ठेगाना</label>
+      <input type="text" id="email" name="email" value="{{ email }}" placeholder="नाम@उदाहरण.नेपाल" />
 
       {% if error %}
       <div class="error-message" role="alert">
@@ -21,21 +20,12 @@
         <span class="error-type">{{ error_type }}</span>
         {% endif %}
         <p>{{ error }}</p>
-        <small>Please enter a valid international email address.</small>
+        <small>कृपया मान्य अन्तर्राष्ट्रिय इमेल ठेगाना प्रविष्ट गर्नुहोस्।</small>
       </div>
       {% endif %}
 
-      <input type="submit" value="Contact us" id="submit" />
+      <input type="submit" value="पठाउनुहोस्" id="submit" />
     </form>
   </div>
-
-  <aside class="info-panel">
-    <p class="kicker">Automation ready</p>
-    <h2>Built for simple testing</h2>
-    <p>
-      This page focuses only on the email validation path: valid addresses continue, while invalid
-      addresses show the validation error type and reason.
-    </p>
-  </aside>
 </section>
 {% endblock %}

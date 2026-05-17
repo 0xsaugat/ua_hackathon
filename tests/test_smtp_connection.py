@@ -36,7 +36,7 @@ def test_smtp_connection():
         context = ssl.create_default_context()
         
         with smtplib.SMTP(smtp_host, smtp_port, timeout=smtp_timeout) as client:
-            client.set_debuglevel(1)  # Enable debug output
+            client.set_debuglevel(0)
             print("[2/3] Connected! Running EHLO...")
             
             if smtp_use_tls:
@@ -47,18 +47,18 @@ def test_smtp_connection():
             print("\n[AUTH] Authenticating...")
             if smtp_username and smtp_password:
                 client.login(smtp_username, smtp_password)
-                print("✓ Authentication successful!")
+                print("[OK] Authentication successful!")
             else:
-                print("⚠ No username/password provided, skipping auth.")
+                print("[WARN] No username/password provided, skipping auth.")
         
         print("\n" + "=" * 60)
-        print("✓ SMTP connection test PASSED")
+        print("[OK] SMTP connection test PASSED")
         print("=" * 60)
         return True
 
     except Exception as exc:
         print("\n" + "=" * 60)
-        print(f"✗ SMTP connection test FAILED: {exc}")
+        print(f"[FAIL] SMTP connection test FAILED: {exc}")
         print("=" * 60)
         return False
 
@@ -69,7 +69,7 @@ def test_send_email(recipient: str = None):
         recipient = os.getenv("SMTP_USERNAME", "").strip()
     
     if not recipient:
-        print("\n⚠ No recipient email provided. Skipping send test.")
+        print("\n[WARN] No recipient email provided. Skipping send test.")
         return False
 
     smtp_host = os.getenv("SMTP_HOST", "").strip()
@@ -123,14 +123,14 @@ Please ignore this message if this is not your email address.
             print("[2/2] Email sent!")
 
         print("\n" + "=" * 60)
-        print(f"✓ Email send test PASSED")
+        print("[OK] Email send test PASSED")
         print(f"Email successfully sent to: {recipient}")
         print("=" * 60)
         return True
 
     except Exception as exc:
         print("\n" + "=" * 60)
-        print(f"✗ Email send test FAILED: {exc}")
+        print(f"[FAIL] Email send test FAILED: {exc}")
         print("=" * 60)
         return False
 
@@ -147,12 +147,12 @@ if __name__ == "__main__":
     if conn_result:
         send_result = test_send_email()
     else:
-        print("\n⚠ Skipping send test due to connection failure.")
+        print("\n[WARN] Skipping send test due to connection failure.")
         send_result = False
 
     print("\n" + "=" * 60)
     print("Test Summary")
     print("=" * 60)
-    print(f"Connection Test: {'PASSED ✓' if conn_result else 'FAILED ✗'}")
-    print(f"Send Test: {'PASSED ✓' if send_result else 'FAILED ✗' if conn_result else 'SKIPPED ⚠'}")
+    print(f"Connection Test: {'PASSED' if conn_result else 'FAILED'}")
+    print(f"Send Test: {'PASSED' if send_result else 'FAILED' if conn_result else 'SKIPPED'}")
     print("=" * 60)
