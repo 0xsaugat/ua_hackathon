@@ -1,60 +1,75 @@
 # UAReady Email and Domain Validation System
 
-Hackathon Nepal 2026 technical track demo for internationalized email and domain validation.
+A small FastAPI application to validate internationalized (EAI) email addresses and IDN domains.
 
-## What it does
+Key features
+- Validates Unicode email addresses (local part and domain), including non-ASCII scripts.
+- Normalizes input with Unicode NFC and verifies IDNA2008/UTS46 domain conversion.
+- Performs DNS checks (MX/A) when available and reports clear, localized error messages.
+- Optionally sends a validation email via SMTP when SMTP credentials are configured.
 
-This FastAPI app validates internationalized email addresses and IDN domains across scripts such as Devanagari, Latin, Arabic, Chinese, and Cyrillic. It normalizes Unicode to NFC, validates with SMTPUTF8/EAI-aware handling, and can send a confirmation email over SMTP when credentials are provided through environment variables.
+Requirements
+- Python 3.10 or newer
+- See `requirements.txt` for exact dependency versions
 
-## Standards covered
-
-- SMTPUTF8 and EAI-aware email validation
-- IDNA2008 and UTS #46 domain handling via IDN conversion
-- Unicode NFC normalization before validation and sendout
-- Clear failure messages for invalid inputs
-
-## Run locally
+Quick start (Windows)
+1. Create and activate a virtual environment:
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\pip.exe install -r requirements.txt
-.\.venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+.\.venv\Scripts\Activate.ps1
 ```
 
-Open:
-
-```text
-http://127.0.0.1:8000/contact-us
-```
-
-## SMTP configuration
-
-Copy [.env.example](.env.example) to `.env` and fill in your SMTP details later. The app reads these variables at startup:
-
-- `SMTP_HOST`
-- `SMTP_PORT`
-- `SMTP_USERNAME`
-- `SMTP_PASSWORD`
-- `SMTP_FROM_EMAIL`
-- `SMTP_FROM_NAME`
-- `SMTP_USE_TLS`
-- `SMTP_USE_SSL`
-- `SMTP_TIMEOUT`
-
-If SMTP settings are missing, validation still works and the UI will show a clear delivery error when sending is attempted.
-
-## Tests
-
-Run the validation suite with:
+2. Install dependencies:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest
+pip install -r requirements.txt
 ```
 
-The suite includes at least 5 valid and 5 invalid internationalized email/domain cases.
+3. Run the app with Uvicorn:
 
-## Notes
+```powershell
+python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+```
 
-- The demo sends confirmation mail to the submitted address.
-- For live SMTPUTF8 testing, use a server that advertises UTF8 support.
-- The UI is intentionally built as a hackathon-ready landing page instead of a plain form.
+4. Open the application in your browser:
+
+```
+http://127.0.0.1:8000/
+```
+
+Configuration (environment variables)
+Create a `.env` file or set environment variables for SMTP if you want the app to send emails. The app reads these variables:
+
+- `SMTP_HOST` — SMTP server hostname (required to send mail)
+- `SMTP_PORT` — SMTP server port (default: `587`)
+- `SMTP_USERNAME` — SMTP username (optional)
+- `SMTP_PASSWORD` — SMTP password (optional)
+- `SMTP_FROM_EMAIL` — From address for outgoing mail (defaults to username or recipient)
+- `SMTP_FROM_NAME` — Friendly sender name (default: `UAReady Demo`)
+- `SMTP_USE_TLS` — Use STARTTLS (`true`/`false`, default: `true`)
+- `SMTP_USE_SSL` — Use implicit SSL (`true`/`false`, default: `false`)
+- `SMTP_TIMEOUT` — Connection timeout in seconds (default: `20`)
+
+If SMTP is not configured the app will still validate addresses and display a delivery error when sending is attempted.
+
+Project layout
+- `main.py` — FastAPI application and route handlers
+- `validators.py` — Email and domain validation logic, DNS lookups, and SMTP send helper
+- `templates/` — Jinja2 HTML templates (`index.html`, `thank_you.html`, etc.)
+- `static/` — Static assets (CSS)
+- `tests/` — Pytest test suite
+
+Testing
+Run the test suite with:
+
+```powershell
+pytest
+```
+
+Notes
+- The validator performs several checks (syntax, normalization, IDNA conversion, DNS lookups) and returns descriptive error types and messages. Use the UI or tests to explore different cases.
+- For end-to-end SMTPUTF8 testing, use an SMTP server that advertises `SMTPUTF8` support.
+
+License
+See the repository for licensing information.
